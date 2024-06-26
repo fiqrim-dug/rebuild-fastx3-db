@@ -10,6 +10,9 @@ This Ansible playbook is designed to rebuild the `fastx3` database by performing
 
 ### Prerequisites
 - Ensure you have Ansible installed on your control machine.
+```bash
+python3 -m pip install --user ansible
+```
 - Verify that you have the appropriate permissions to manage services and modify files on the target hosts.
 - Update your inventory file with the target hosts.
 
