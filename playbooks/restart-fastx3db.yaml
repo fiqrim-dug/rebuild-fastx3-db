@@ -1,0 +1,32 @@
+---
+- name: Rebuild fastx3 db
+  hosts: rud
+  become: true
+  gather_facts: false #true on prod
+  any_errors_fatal: true
+
+  tasks:
+    # Stopping the fastx3 services
+    - name: Stop fastx3 service
+      ansible.builtin.systemd:
+        name: fastx3 # remove on prod
+        # name: fastx3
+        state: stopped
+      register: fastx3_status
+      failed_when: "'restarted' in fastx3_status.state"
+ 
+    - name: Rename folder
+      command: "mv /d/db/fastx3/{{ inventory_hostname }} /d/db/fastx3/{{ inventory_hostname }}_backup"
+
+    - name: Copy db template
+      command: "rsync -av /d/db/fastx3/rud_fastx_skel/ /d/db/fastx3/{{ inventory_hostname }}/"
+      # command: "rsync -av /d/db/fastx3/ud_fastx_skel/ /d/db/fastx3/{{ inventory_hostname }}/"
+
+    - name: Restart fastx3 service
+      ansible.builtin.systemd:
+        name: fastx3 # remove on prod
+        # name: slurmdb
+        state: restarted
+      register: fastx3_status
+      failed_when: "'stopped' in fastx3_status.state"
+
