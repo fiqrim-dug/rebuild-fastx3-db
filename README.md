@@ -1,124 +1,95 @@
-# Update SlurmDB, Controller, and Client
+# Ansible Playbook: Rebuild fastx3 Database
 
-This Ansible playbook automates the process of updating SlurmDB, Controller, and Client nodes. The playbook performs tasks such as creating backup directories, verifying configurations, downloading and extracting new releases from GitHub, and restarting Slurm services. https://confluence.dug.com/pages/viewpage.action?spaceKey=DUGIT&title=20240122+Update+London%27s+SLURM+to+slurm-23-02-7-1-DUG-5
+This Ansible playbook is designed to rebuild the `fastx3` database by performing the following steps:
+1. Stopping the `fastx3` service.
+2. Renaming the existing database folder.
+3. Copying a new database template.
+4. Restarting the `fastx3` service.
 
-## ✨ Requirements
+## Usage
 
-- Ansible installed on the control machine.
-- SSH access to the Slurm nodes (SlurmDB, Controller, and Client).
-- GitHub personal access token for downloading releases.
-- SQL key for database access.
+### Prerequisites
+- Ensure you have Ansible installed on your control machine.
+- Verify that you have the appropriate permissions to manage services and modify files on the target hosts.
+- Update your inventory file with the target hosts.
 
-## ❔ Variables
+### Playbook Details
 
-- `get_url_args`: Dictionary containing the destination path for downloaded files.
-- `asset_name`: The name of the GitHub release asset.
-- `github_pat`: GitHub personal access token.
-- `sql_key`: SQL key for database access.
-- `backup_dir`: Directory path for backups.
-- `gh_release_api`: GitHub API URL for the latest release.
+#### Playbook Name
+`rebuild_fastx3_db.yml`
 
-## 💻 Hosts
+#### Host Group
+`rud`
 
-- `lslurmdb`: Hosts related to SlurmDB.
-- `lslurmcontroller`: Hosts related to the Slurm Controller.
-- `lslurmclient`: Hosts related to the Slurm Client.
+#### Variables
+- `inventory_hostname`: This variable is used to reference the hostname of the target machine.
 
-## 🚀 Tasks
+### Steps
 
-1. **Ensure the backup directory exists**
-   - Creates backup directories on the SlurmDB and SlurmController nodes.
+1. **Stop fastx3 Service**
+    - Uses the `ansible.builtin.systemd` module to stop the `fastx3` service.
+    - On production, replace `fastx3` with the actual service name if different.
+
+2. **Rename Folder**
+    - Renames the existing database folder to create a backup.
+    - The folder `/d/db/fastx3/{{ inventory_hostname }}` is renamed to `/d/db/fastx3/{{ inventory_hostname }}_backup`.
+
+3. **Copy Database Template**
+    - Copies the contents of the database template folder to the new database location.
+    - Uses `rsync` to copy files from `/d/db/fastx3/rud_fastx_skel/` to `/d/db/fastx3/{{ inventory_hostname }}/`.
+    - On production, replace the source path with the appropriate template folder.
+
+4. **Restart fastx3 Service**
+    - Restarts the `fastx3` service using the `ansible.builtin.systemd` module.
+    - On production, replace `fastx3` with the actual service name if different.
+
+### Example Playbook
 
 ```yaml
-    - name: Ensure the backup directory exists
-      ansible.builtin.file:
-        path: "{{ backup_dir }}"
-        mode: '0755'
-        state: directory
+---
+- name: Rebuild fastx3 db
+  hosts: rud
+  become: true
+  gather_facts: false # true on prod
+  any_errors_fatal: true
 
+  tasks:
+    - name: Stop fastx3 service
+      ansible.builtin.systemd:
+        name: fastx3 # remove on prod
+        # name: fastx3
+        state: stopped
+      register: fastx3_status
+      failed_when: "'restarted' in fastx3_status.state"
+ 
+    - name: Rename folder
+      command: "mv /d/db/fastx3/{{ inventory_hostname }} /d/db/fastx3/{{ inventory_hostname }}_backup"
+
+    - name: Copy db template
+      command: "rsync -av /d/db/fastx3/rud_fastx_skel/ /d/db/fastx3/{{ inventory_hostname }}/"
+      # command: "rsync -av /d/db/fastx3/ud_fastx_skel/ /d/db/fastx3/{{ inventory_hostname }}/"
+
+    - name: Restart fastx3 service
+      ansible.builtin.systemd:
+        name: fastx3 # remove on prod
+        # name: slurmdb
+        state: restarted
+      register: fastx3_status
+      failed_when: "'stopped' in fastx3_status.state"
 ```
 
-2. **Run the sanity check script**
-   - Runs the `sanity_slurm_conf.sh` script to verify the Slurm configuration on the Controller.
-```yaml
-      ansible.builtin.shell: DEBUG=1 /d/sw/slurm/etc/sanity_slurm_conf.sh
+### Running the Playbook
+
+To run the playbook, use the following command:
+```sh
+ansible-playbook rebuild_fastx3_db.yml -i your_inventory_file
 ```
 
-3. **Extract and compare configuration files**
-   - Compares the current Slurm configuration file and failed if it doesn't match (ensure all dynamic changes have been written)
-```yaml
-      failed_when: diff_result.rc != 0 
-      when: inventory_hostname in groups['lslurmcontroller']
+### Notes
 
-```
+- Ensure that the `gather_facts` parameter is set to `true` on production environments if needed.
+- Adjust the service name and template paths as per your production environment requirements.
 
-4. **Obtain GitHub release details**
-   - Fetches the latest release details from the GitHub API
-```yaml
-      ansible.builtin.set_fact:
-        gh_release_asset_url: "{{ gh_release.json.assets | selectattr('name', 'contains', asset_name) | map(attribute='url') | first }}"
-        asset_dir_name: "{{ gh_release.json.assets | selectattr('name', 'contains', asset_name) | map(attribute='name') | first | regex_replace('.tar.bz2', '') }}"
+This playbook provides a systematic approach to rebuilding the `fastx3` database, ensuring minimal downtime and data integrity through the use of backups and templating.
 
-```
-5. **Download and extract the release**
-   - Downloads and extracts the specified release asset from GitHub.
-```yaml
-      ansible.builtin.unarchive:
-        src: "{{ download_dest.dest }}"
-        dest: "{{ get_url_args.dest }}"
-        remote_src: yes
-```
-6. **Stop Slurm services**
-   - Stops the SlurmDB, SlurmController, and SlurmClient services and failed if it still on active state
-```yaml
-      failed_when: "'restarted' in slurmdbd_status.state"
-```
-7. **Backup the configuration**
-   - Copies the existing configuration to a backup directory.
-```yaml
-      ansible.builtin.copy:
-        src: "/var/pool/slurm"
-        dest: "{{ get_url_args.dest }}/backup_var_spool_slurm_{{ lookup('pipe', 'date +%Y%m%d') }}"
-```
-8. **Create relative symlinks**
-   - Creates symbolic links for the new Slurm version.
-```yaml
-      ansible.builtin.file:
-        src: "{{ asset_dir_name }}"
-        dest: "{{ get_url_args.dest }}/d/sw/slurm/latest"
-        state: link
-```
-9. **Restart Slurm services**
-   - Restarts the Slurm services on the SlurmDB, SlurmController, and SlurmClient nodes and failed if it stopped
-```yaml
-      failed_when: "'stopped' in slurmdbd_status.state"
-```
-## 📣 Usage
-
-1. **Prepare the environment**
-   - Ensure you have the required access tokens and keys in `~/.ssh/github_token.txt` and `~/.ssh/sql_token.txt`.
-
-2. **Run the playbook**
-   ```sh
-    ansible-playbook -i inventory/hosts.yaml playbooks/slurm_rollout.yaml 
-   ```
-
-
-## 🐛 Debugging   
-1. **Run the playbook**
-   ```sh
-    ansible-playbook -i inventory/hosts.yaml playbooks/slurm_rollout.yaml -vv
-   ```
-
-## 📜 Notes
-
-- This is being done in the tested environment. Please change the `FastX3` services to the relevant services, and ensure the paths are correct as per the configuration.
-- The playbook assumes that the GitHub token and SQL key files are stored in the `~/.ssh` directory.
-- Adjust file paths and variables according to your specific setup.
-
-## 👉 Pending
-- [x] to move into /d/sw/slurm from its localData
-- [x] update services to  relevant services
-- [ ] update `host.yaml` to  relevant host
-- [ ] test the key for dumping sql database into backup dir
-- [ ] sanity check the size of dumped sql database
+---
